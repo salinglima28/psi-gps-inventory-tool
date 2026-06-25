@@ -133,4 +133,19 @@ export default function Layout() {
                   />
                   <div>
                     <div className="font-medium text-gray-800">{sport.name}</div>
-                    <div className="text-xs text-gray-400">{sport.practitioner}</div
+                   <div className="text-xs text-gray-400">{sport.practitioner}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      </nav>
+
+      {/* Page content */}
+      <main className="max-w-7xl mx-auto px-6 py-6">
+        <Outlet context={{ selectedSports, sports }} />
+      </main>
+    </div>
+  )
+}
