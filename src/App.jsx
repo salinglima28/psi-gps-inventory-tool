@@ -6,7 +6,7 @@ import SportView from './pages/SportView'
 import UnitDetail from './pages/UnitDetail'
 import CSVUpload from './pages/CSVUpload'
 import Exceptions from './pages/Exceptions'
-import ReceiveReplacement from './pages/ReceiveReplacement'
+import ReplaceUnitPage from './pages/ReceiveReplacement'
 
 export default function App() {
   return (
@@ -18,7 +18,7 @@ export default function App() {
           <Route path="unit/:unitId" element={<UnitDetail />} />
           <Route path="upload" element={<CSVUpload />} />
           <Route path="exceptions" element={<Exceptions />} />
-          <Route path="replacement" element={<ReceiveReplacement />} />
+          <Route path="replacement" element={<ReplaceUnitPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
