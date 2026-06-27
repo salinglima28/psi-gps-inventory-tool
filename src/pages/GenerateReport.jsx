@@ -492,7 +492,12 @@ function StatusActivity({ sports }) {
 
 // ── Main page ───────────────────────────────────────────────
 export default function GenerateReport() {
-  const { sports } = useOutletContext()
+  const context = useOutletContext()
+  const sports = context?.sports ?? []
+
+  if (!context) return (
+    <div className="flex items-center justify-center h-64 text-gray-400 text-sm">Loading...</div>
+  )
 
   return (
     <div className="space-y-6 max-w-3xl">
