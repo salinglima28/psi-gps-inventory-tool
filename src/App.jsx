@@ -1,4 +1,5 @@
 import React from 'react'
+import GenerateReport from './pages/GenerateReport'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="unit/:unitId" element={<UnitDetail />} />
           <Route path="upload" element={<CSVUpload />} />
           <Route path="exceptions" element={<Exceptions />} />
+          <Route path="report" element={<GenerateReport />} />
           <Route path="replacement" element={<ReplaceUnitPage />} />
         </Route>
       </Routes>
