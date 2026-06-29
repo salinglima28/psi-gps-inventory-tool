@@ -251,13 +251,34 @@ export default function CSVUpload() {
         </p>
       </div>
 
-      {/* Template hint */}
+     {/* Template hint */}
       <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-[#0057B8] space-y-1">
         <p><span className="font-medium">Required columns:</span> serial_number, athlete_name, sport</p>
         <p><span className="font-medium">Optional columns:</span> practitioner_name, date_assigned (YYYY-MM-DD), unit_type (GPS or IMU), notes</p>
         <p className="text-blue-400 pt-1">
-          Tip — set <span className="font-mono font-medium">athlete_name = spare</span> for any unit that should enter the spare pool instead of being assigned to an athlete.
+          Tip — set <span className="font-mono font-medium">athlete_name = spare</span> for any unit that should enter the spare pool instead of being assigned to an athlete. The word "spare" is not case-sensitive — Spare, SPARE, and spare all work.
         </p>
+        <div className="pt-2">
+          <button
+            onClick={() => {
+              const csv = [
+                'serial_number,athlete_name,sport,unit_type,date_assigned,practitioner_name,notes',
+                'PD-000001,Smith John,Basketball,IMU,2025-08-15,Wendy,Example row — delete before uploading',
+                'PD-000002,spare,Basketball,IMU,2025-08-15,Wendy,Example spare row — delete before uploading',
+              ].join('\n')
+              const blob = new Blob([csv], { type: 'text/csv' })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = 'psi_unit_upload_template.csv'
+              a.click()
+              URL.revokeObjectURL(url)
+            }}
+            className="inline-flex items-center gap-2 px-4 py-1.5 bg-white border border-[#0057B8] text-[#0057B8] rounded-lg text-sm font-medium hover:bg-blue-50 transition-colors"
+          >
+            Download CSV template
+          </button>
+        </div>
       </div>
 
       {/* Upload area */}
