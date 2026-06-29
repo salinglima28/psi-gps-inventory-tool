@@ -263,8 +263,8 @@ export default function CSVUpload() {
             onClick={() => {
               const csv = [
                 'serial_number,athlete_name,sport,unit_type,date_assigned,practitioner_name,notes',
-                'PD-000001,Smith John,Basketball,IMU,2025-08-15,Wendy,Example row — delete before uploading',
-                'PD-000002,spare,Basketball,IMU,2025-08-15,Wendy,Example spare row — delete before uploading',
+                'A1B2C3D4,John Smith,Basketball,IMU,2025-08-15,Wendy,Example row — delete before uploading',
+                'E5F6G7H8,spare,Soccer,GPS,2025-08-15,Carlos,Example spare row — delete before uploading',
               ].join('\n')
               const blob = new Blob([csv], { type: 'text/csv' })
               const url = URL.createObjectURL(blob)
