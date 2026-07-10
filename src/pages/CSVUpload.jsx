@@ -106,8 +106,8 @@ export default function CSVUpload() {
         if (existingSport && existingSport.name.toLowerCase() !== row.sport.toLowerCase()) {
           rowWarnings.push(`Unit is currently with ${existingSport.name} — will transfer to ${row.sport}.`)
         }
-        if (['broken_held', 'broken_dept', 'lost_missing', 'returned_to_vendor'].includes(existing.status)) {
-          rowWarnings.push(`Unit status is currently "${existing.status.replace(/_/g, ' ')}" — uploading will reactivate it as ${spare ? 'spare' : 'assigned'}.`)
+        if (['broken_with_sport', 'broken_with_dept', 'lost', 'at_playerdata'].includes(existing.status)) {
+          rowWarnings.push(`Unit status is currently "${existing.status.replace(/_/g, ' ')}" — this upload cannot reactivate it. Update it via Replace a Unit first, or remove this row.`)
         }
       }
 
@@ -137,7 +137,7 @@ export default function CSVUpload() {
       if (!sportObj) continue
 
       const spare = row._spare
-      const newStatus = spare ? 'unassigned_sport' : 'assigned'
+      const newStatus = spare ? 'spare' : 'assigned'
 
       if (row._status === 'create') {
         const { data: newUnit } = await supabase.from('units').insert({
@@ -146,7 +146,7 @@ export default function CSVUpload() {
           sport_id:        sportObj.id,
           unit_type:       row.unit_type || 'GPS',
           acquired_date:   row.date_added || today,
-          acquired_source: 'csv_import',
+          acquired_source: 'manual_entry',
           notes:           row.notes || null,
         }).select().single()
 
@@ -168,6 +168,13 @@ export default function CSVUpload() {
           .single()
 
         if (!existingUnit) continue
+
+        // Statuses outside spare/assigned can't be silently overwritten by a
+        // re-upload — the DB trigger will reject illegal transitions anyway,
+        // but skip these client-side too so the row doesn't just fail loudly.
+        if (['broken_with_sport', 'broken_with_dept', 'lost', 'at_playerdata'].includes(existingUnit.status)) {
+          continue
+        }
 
         await supabase.from('units').update({
           status:   newStatus,
