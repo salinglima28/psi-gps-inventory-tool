@@ -3,27 +3,21 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 
 const STATUS_LABELS = {
-  assigned:             'Assigned',
-  unassigned_sport:     'Spare',
-  unassigned_dept:      'Dept Holding',
-  broken_held:          'Broken (With Sport)',
-  broken_dept:          'Broken (With Dept)',
-  returned_to_vendor:   'Returned to PlayerData',
-  replacement_pending:  'Replacement Pending',
-  lost_missing:         'Lost / Missing',
-  retired:              'Retired',
+  assigned:           'Assigned',
+  spare:              'Spare',
+  broken_with_sport:  'Broken (With Sport)',
+  broken_with_dept:   'Broken (With Dept)',
+  at_playerdata:      'At PlayerData',
+  lost:               'Lost',
 }
 
 const STATUS_COLORS = {
-  assigned:             'bg-green-100 text-green-700',
-  unassigned_sport:     'bg-blue-100 text-blue-700',
-  unassigned_dept:      'bg-purple-100 text-purple-700',
-  broken_held:          'bg-yellow-100 text-yellow-700',
-  broken_dept:          'bg-orange-100 text-orange-700',
-  returned_to_vendor:   'bg-gray-100 text-gray-600',
-  replacement_pending:  'bg-gray-100 text-gray-600',
-  lost_missing:         'bg-red-100 text-red-700',
-  retired:              'bg-gray-100 text-gray-400',
+  assigned:           'bg-green-100 text-green-700',
+  spare:              'bg-blue-100 text-blue-700',
+  broken_with_sport:  'bg-yellow-100 text-yellow-700',
+  broken_with_dept:   'bg-orange-100 text-orange-700',
+  at_playerdata:      'bg-gray-100 text-gray-600',
+  lost:               'bg-red-100 text-red-700',
 }
 
 const EVENT_LABELS = {
@@ -36,13 +30,24 @@ const EVENT_LABELS = {
   returned_to_vendor:       '📤 Returned to PlayerData',
   replacement_requested:    '🔄 Replacement requested',
   replacement_received:     '📥 Replacement received',
-  marked_lost:              '❓ Marked lost/missing',
+  marked_lost:              '❓ Marked lost',
   marked_retired:           '🗃️ Retired',
   spare_assigned:           '🔁 Spare assigned',
   unit_type_changed:        '⚙️ Unit type changed',
   csv_import:               '📋 CSV import',
   status_corrected:         '✏️ Status corrected',
   note_added:               '📝 Note added',
+}
+
+// Mirrors the check_status_transition() trigger from migration 06.
+// Kept in sync manually — if the trigger changes, update this too.
+const VALID_TRANSITIONS = {
+  spare:              ['assigned', 'broken_with_sport', 'broken_with_dept'],
+  assigned:           ['broken_with_sport', 'broken_with_dept', 'lost', 'spare'],
+  broken_with_sport:  ['broken_with_dept', 'at_playerdata'],
+  broken_with_dept:   ['at_playerdata'],
+  at_playerdata:      [],
+  lost:               [],
 }
 
 export default function UnitDetail() {
@@ -58,7 +63,8 @@ export default function UnitDetail() {
   const [showLost,        setShowLost]        = useState(false)
   const [showMarkSpare,   setShowMarkSpare]   = useState(false)
   const [showMarkInUse,   setShowMarkInUse]   = useState(false)
-  const [showReturnDept,  setShowReturnDept]  = useState(false)
+  const [showTransferDept,setShowTransferDept]= useState(false)
+  const [showReturnPD,    setShowReturnPD]    = useState(false)
   const [showConvert,     setShowConvert]     = useState(false)
   const [actionNotes,     setActionNotes]     = useState('')
   const [firmware,        setFirmware]        = useState('')
@@ -98,6 +104,10 @@ export default function UnitDetail() {
     setLoading(false)
   }
 
+  function canTransitionTo(newStatus) {
+    return unit ? (VALID_TRANSITIONS[unit.status] || []).includes(newStatus) : false
+  }
+
   async function logEvent(type, extra = {}) {
     await supabase.from('events').insert({
       unit_id:     unitId,
@@ -109,55 +119,24 @@ export default function UnitDetail() {
     })
   }
 
-  async function handleMarkBroken() {
+  async function applyStatus(newStatus, eventType, modalCloser) {
     setSaving(true)
-    await supabase.from('units').update({ status: 'broken_held' }).eq('id', unitId)
-    await logEvent('marked_broken', { to_status: 'broken_held' })
+    const { error } = await supabase.from('units').update({ status: newStatus }).eq('id', unitId)
+    if (!error) {
+      await logEvent(eventType, { to_status: newStatus })
+    }
     setSaving(false)
-    setShowBroken(false)
+    modalCloser(false)
     setActionNotes('')
     fetchData()
   }
 
-  async function handleMarkLost() {
-    setSaving(true)
-    await supabase.from('units').update({ status: 'lost_missing' }).eq('id', unitId)
-    await logEvent('marked_lost', { to_status: 'lost_missing' })
-    setSaving(false)
-    setShowLost(false)
-    setActionNotes('')
-    fetchData()
-  }
-
-  async function handleMarkSpare() {
-    setSaving(true)
-    await supabase.from('units').update({ status: 'unassigned_sport' }).eq('id', unitId)
-    await logEvent('marked_spare', { to_status: 'unassigned_sport' })
-    setSaving(false)
-    setShowMarkSpare(false)
-    setActionNotes('')
-    fetchData()
-  }
-
-  async function handleMarkInUse() {
-    setSaving(true)
-    await supabase.from('units').update({ status: 'assigned' }).eq('id', unitId)
-    await logEvent('marked_in_use', { to_status: 'assigned' })
-    setSaving(false)
-    setShowMarkInUse(false)
-    setActionNotes('')
-    fetchData()
-  }
-
-  async function handleReturnToDept() {
-    setSaving(true)
-    await supabase.from('units').update({ status: 'broken_dept' }).eq('id', unitId)
-    await logEvent('transferred_to_dept', { to_status: 'broken_dept' })
-    setSaving(false)
-    setShowReturnDept(false)
-    setActionNotes('')
-    fetchData()
-  }
+  const handleMarkBroken   = () => applyStatus('broken_with_sport', 'marked_broken', setShowBroken)
+  const handleMarkLost     = () => applyStatus('lost', 'marked_lost', setShowLost)
+  const handleMarkSpare    = () => applyStatus('spare', 'marked_spare', setShowMarkSpare)
+  const handleMarkInUse    = () => applyStatus('assigned', 'marked_in_use', setShowMarkInUse)
+  const handleTransferDept = () => applyStatus('broken_with_dept', 'transferred_to_dept', setShowTransferDept)
+  const handleReturnToPD   = () => applyStatus('at_playerdata', 'returned_to_vendor', setShowReturnPD)
 
   async function handleConvertType() {
     setSaving(true)
@@ -186,6 +165,8 @@ export default function UnitDetail() {
   if (!unit) {
     return <div className="text-center py-16 text-gray-400">Unit not found.</div>
   }
+
+  const isTerminal = unit.status === 'at_playerdata' || unit.status === 'lost'
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -221,39 +202,39 @@ export default function UnitDetail() {
             </div>
           </div>
 
-          {/* Action buttons */}
+          {/* Action buttons — gated by the actual DB trigger's allowed transitions */}
           <div className="flex flex-wrap gap-2">
-            {unit.status === 'assigned' && (
-              <>
-                <button onClick={() => setShowMarkSpare(true)}
-                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
-                  Mark Spare
-                </button>
-                <button onClick={() => setShowBroken(true)}
-                  className="px-3 py-1.5 text-sm border border-yellow-300 text-yellow-700 rounded-lg hover:bg-yellow-50">
-                  Mark Broken
-                </button>
-              </>
+            {canTransitionTo('spare') && (
+              <button onClick={() => setShowMarkSpare(true)}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
+                Mark Spare
+              </button>
             )}
-            {(unit.status === 'unassigned_sport' || unit.status === 'unassigned_dept') && (
+            {canTransitionTo('assigned') && (
               <button onClick={() => setShowMarkInUse(true)}
                 className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
                 Mark In Use
               </button>
             )}
-            {unit.status === 'unassigned_sport' && (
+            {canTransitionTo('broken_with_sport') && (
               <button onClick={() => setShowBroken(true)}
                 className="px-3 py-1.5 text-sm border border-yellow-300 text-yellow-700 rounded-lg hover:bg-yellow-50">
                 Mark Broken
               </button>
             )}
-            {unit.status === 'broken_held' && (
-              <button onClick={() => setShowReturnDept(true)}
+            {canTransitionTo('broken_with_dept') && unit.status === 'broken_with_sport' && (
+              <button onClick={() => setShowTransferDept(true)}
                 className="px-3 py-1.5 text-sm border border-orange-300 text-orange-700 rounded-lg hover:bg-orange-50">
                 Transfer to Dept
               </button>
             )}
-            {!['lost_missing', 'retired', 'returned_to_vendor', 'replacement_pending'].includes(unit.status) && (
+            {canTransitionTo('at_playerdata') && (
+              <button onClick={() => setShowReturnPD(true)}
+                className="px-3 py-1.5 text-sm border border-gray-400 text-gray-700 rounded-lg hover:bg-gray-50">
+                Send to PlayerData
+              </button>
+            )}
+            {canTransitionTo('lost') && (
               <button onClick={() => setShowLost(true)}
                 className="px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50">
                 Mark Lost
@@ -265,6 +246,12 @@ export default function UnitDetail() {
             </button>
           </div>
         </div>
+
+        {isTerminal && (
+          <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200 text-sm text-gray-500">
+            This unit is in a terminal status ({STATUS_LABELS[unit.status]}) — no further status changes are possible except a manual correction.
+          </div>
+        )}
 
         {/* Unit meta */}
         <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
@@ -304,7 +291,7 @@ export default function UnitDetail() {
                   </div>
                   {event.from_status && event.to_status && (
                     <div className="text-gray-400 text-xs">
-                      {STATUS_LABELS[event.from_status]} → {STATUS_LABELS[event.to_status]}
+                      {STATUS_LABELS[event.from_status] || event.from_status} → {STATUS_LABELS[event.to_status] || event.to_status}
                     </div>
                   )}
                   {event.notes && (
@@ -322,11 +309,11 @@ export default function UnitDetail() {
 
       {/* ── MODALS ── */}
 
-      {/* Mark Broken */}
       {showBroken && (
         <Modal title="Mark Unit as Broken" onClose={() => { setShowBroken(false); setActionNotes('') }}>
           <p className="text-sm text-gray-600 mb-3">
-            This will mark the unit as broken. It will remain with your sport until collected by the dept lead.
+            This will mark the unit as broken and with your sport. From there it can be
+            transferred to the dept or sent directly to PlayerData.
           </p>
           <textarea
             placeholder="Describe the damage (optional)..."
@@ -347,12 +334,12 @@ export default function UnitDetail() {
         </Modal>
       )}
 
-      {/* Mark Lost */}
       {showLost && (
-        <Modal title="Mark Unit as Lost / Missing" onClose={() => { setShowLost(false); setActionNotes('') }}>
+        <Modal title="Mark Unit as Lost" onClose={() => { setShowLost(false); setActionNotes('') }}>
           <p className="text-sm text-gray-600 mb-3">
-            This will flag the unit as lost. It will remain in the system and appear
-            in the exceptions report. This action cannot be undone without a manual status correction.
+            This will flag the unit as lost. Lost is a terminal status — it will remain
+            in the system and appear in the exceptions report, but cannot be changed further
+            without a manual status correction.
           </p>
           <textarea
             placeholder="Add context — when was it last seen? (optional)"
@@ -373,7 +360,6 @@ export default function UnitDetail() {
         </Modal>
       )}
 
-      {/* Mark Spare */}
       {showMarkSpare && (
         <Modal title="Mark Spare" onClose={() => { setShowMarkSpare(false); setActionNotes('') }}>
           <p className="text-sm text-gray-600 mb-3">
@@ -398,7 +384,6 @@ export default function UnitDetail() {
         </Modal>
       )}
 
-      {/* Mark In Use */}
       {showMarkInUse && (
         <Modal title="Mark In Use" onClose={() => { setShowMarkInUse(false); setActionNotes('') }}>
           <p className="text-sm text-gray-600 mb-3">
@@ -423,12 +408,10 @@ export default function UnitDetail() {
         </Modal>
       )}
 
-      {/* Transfer to Dept */}
-      {showReturnDept && (
-        <Modal title="Transfer Broken Unit to Dept" onClose={() => { setShowReturnDept(false); setActionNotes('') }}>
+      {showTransferDept && (
+        <Modal title="Transfer Broken Unit to Dept" onClose={() => { setShowTransferDept(false); setActionNotes('') }}>
           <p className="text-sm text-gray-600 mb-3">
-            This confirms the dept lead has physically collected this broken unit.
-            The sport's allocation will drop by 1 until a replacement is received.
+            This confirms the dept lead has physically collected this broken unit from the sport.
           </p>
           <textarea
             placeholder="Notes (optional)..."
@@ -437,11 +420,11 @@ export default function UnitDetail() {
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-16 resize-none focus:outline-none focus:ring-2 focus:ring-orange-300"
           />
           <div className="flex justify-end gap-2 mt-4">
-            <button onClick={() => { setShowReturnDept(false); setActionNotes('') }}
+            <button onClick={() => { setShowTransferDept(false); setActionNotes('') }}
               className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
               Cancel
             </button>
-            <button onClick={handleReturnToDept} disabled={saving}
+            <button onClick={handleTransferDept} disabled={saving}
               className="px-4 py-2 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-50">
               {saving ? 'Saving...' : 'Confirm — Transfer to Dept'}
             </button>
@@ -449,7 +432,31 @@ export default function UnitDetail() {
         </Modal>
       )}
 
-      {/* Convert Unit Type */}
+      {showReturnPD && (
+        <Modal title="Send to PlayerData" onClose={() => { setShowReturnPD(false); setActionNotes('') }}>
+          <p className="text-sm text-gray-600 mb-3">
+            This confirms the unit has shipped back to PlayerData. This is a terminal
+            status — no further changes will be possible without a manual correction.
+          </p>
+          <textarea
+            placeholder="Tracking reference or notes (optional)..."
+            value={actionNotes}
+            onChange={e => setActionNotes(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-16 resize-none focus:outline-none focus:ring-2 focus:ring-gray-300"
+          />
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={() => { setShowReturnPD(false); setActionNotes('') }}
+              className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
+              Cancel
+            </button>
+            <button onClick={handleReturnToPD} disabled={saving}
+              className="px-4 py-2 text-sm bg-gray-700 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50">
+              {saving ? 'Saving...' : 'Confirm — Send to PlayerData'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {showConvert && (
         <Modal title={`Convert to ${unit.unit_type === 'GPS' ? 'IMU' : 'GPS'}`} onClose={() => { setShowConvert(false); setFirmware(''); setActionNotes('') }}>
           <p className="text-sm text-gray-600 mb-3">
