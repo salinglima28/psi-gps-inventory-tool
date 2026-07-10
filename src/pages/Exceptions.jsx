@@ -6,13 +6,12 @@ export default function Exceptions() {
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [exceptions, setExceptions] = useState({
-    zerospares:       [],
-    underallocated:   [],
-    overallocated:    [],
-    brokenNotReturned:[],
-    lost:             [],
-    multipleUnits:    [],
-    unitsMultiAthlete:[],
+    noSpares:          [],
+    lowSpares:         [],
+    unaccounted:       [],
+    overAllocated:     [],
+    brokenNotReturned: [],
+    lost:              [],
   })
 
   useEffect(() => {
@@ -22,14 +21,14 @@ export default function Exceptions() {
   async function fetchExceptions() {
     setLoading(true)
 
-    // Sports with zero spares
     const { data: allocation } = await supabase
       .from('sport_allocation')
       .select('*')
 
-    const zerospares        = allocation?.filter(s => s.zero_spares_warning && s.accounted_for > 0) || []
-    const underallocated    = allocation?.filter(s => s.allocation_delta < 0) || []
-    const overallocated     = allocation?.filter(s => s.allocation_delta > 0) || []
+    const noSpares      = allocation?.filter(s => s.health === 'no_spare') || []
+    const lowSpares      = allocation?.filter(s => s.health === 'low_spare') || []
+    const unaccounted    = allocation?.filter(s => s.unaccounted_for > 0) || []
+    const overAllocated  = allocation?.filter(s => s.total_on_record > s.contracted_units) || []
 
     // Broken units held more than 30 days
     const thirtyDaysAgo = new Date()
@@ -38,61 +37,33 @@ export default function Exceptions() {
     const { data: brokenUnits } = await supabase
       .from('units')
       .select('id, serial_number, sport_id, updated_at, sports(name)')
-      .eq('status', 'broken_held')
+      .eq('status', 'broken_with_sport')
       .lt('updated_at', thirtyDaysAgo.toISOString())
 
     // Lost units
     const { data: lostUnits } = await supabase
       .from('units')
       .select('id, serial_number, sport_id, updated_at, sports(name)')
-      .eq('status', 'lost_missing')
-
-    // Athletes with multiple active units
-    const { data: activeAssignments } = await supabase
-      .from('assignments')
-      .select('athlete_name, sport_id, unit_id, sports(name)')
-      .is('end_date', null)
-
-    const athleteUnitCount = {}
-    activeAssignments?.forEach(a => {
-      const key = `${a.athlete_name}__${a.sport_id}`
-      if (!athleteUnitCount[key]) {
-        athleteUnitCount[key] = { athlete_name: a.athlete_name, sport: a.sports?.name, units: [] }
-      }
-      athleteUnitCount[key].units.push(a.unit_id)
-    })
-    const multipleUnits = Object.values(athleteUnitCount).filter(a => a.units.length > 1)
-
-    // Units with multiple active assignments
-    const unitAssignCount = {}
-    activeAssignments?.forEach(a => {
-      if (!unitAssignCount[a.unit_id]) unitAssignCount[a.unit_id] = []
-      unitAssignCount[a.unit_id].push(a.athlete_name)
-    })
-    const unitsMultiAthlete = Object.entries(unitAssignCount)
-      .filter(([, athletes]) => athletes.length > 1)
-      .map(([unit_id, athletes]) => ({ unit_id, athletes }))
+      .eq('status', 'lost')
 
     setExceptions({
-      zerospares,
-      underallocated,
-      overallocated,
+      noSpares,
+      lowSpares,
+      unaccounted,
+      overAllocated,
       brokenNotReturned: brokenUnits || [],
       lost:              lostUnits   || [],
-      multipleUnits,
-      unitsMultiAthlete,
     })
     setLoading(false)
   }
 
   const totalExceptions =
-    exceptions.zerospares.length +
-    exceptions.underallocated.length +
-    exceptions.overallocated.length +
+    exceptions.noSpares.length +
+    exceptions.lowSpares.length +
+    exceptions.unaccounted.length +
+    exceptions.overAllocated.length +
     exceptions.brokenNotReturned.length +
-    exceptions.lost.length +
-    exceptions.multipleUnits.length +
-    exceptions.unitsMultiAthlete.length
+    exceptions.lost.length
 
   if (loading) {
     return (
@@ -129,11 +100,11 @@ export default function Exceptions() {
       )}
 
       <ExceptionSection
-        title="Zero Spares Warning"
+        title="Zero Spares"
         color="red"
         icon="⚠️"
-        items={exceptions.zerospares}
-        description="Sports with no spare units available. Any broken unit will leave an athlete without a device."
+        items={exceptions.noSpares}
+        description="Sports with no spare units available. Any broken unit leaves the sport short until a replacement arrives."
         renderItem={item => (
           <div className="flex items-center justify-between">
             <div>
@@ -148,11 +119,30 @@ export default function Exceptions() {
       />
 
       <ExceptionSection
-        title="Under Contracted Allocation"
-        color="red"
+        title="Low Spares"
+        color="yellow"
         icon="📉"
-        items={exceptions.underallocated}
-        description="Sports with fewer units than contracted. May indicate units in transit or lost."
+        items={exceptions.lowSpares}
+        description="Sports running low on spare units relative to their contracted amount — worth restocking soon."
+        renderItem={item => (
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="font-medium text-gray-800">{item.sport_name}</span>
+              <span className="text-gray-400 text-xs ml-2">{item.practitioner}</span>
+            </div>
+            <span className="text-sm text-yellow-600 font-medium">
+              {item.spare} spare of {item.contracted_units} contracted
+            </span>
+          </div>
+        )}
+      />
+
+      <ExceptionSection
+        title="Unaccounted For Units"
+        color="red"
+        icon="❓"
+        items={exceptions.unaccounted}
+        description="Sports with fewer units on record than contracted. May indicate units never entered into inventory."
         renderItem={item => (
           <div className="flex items-center justify-between">
             <div>
@@ -160,7 +150,7 @@ export default function Exceptions() {
               <span className="text-gray-400 text-xs ml-2">{item.practitioner}</span>
             </div>
             <span className="text-sm text-red-600 font-medium">
-              {item.accounted_for} of {item.contracted_units} · {item.allocation_delta} under
+              {item.total_on_record} of {item.contracted_units} · {item.unaccounted_for} unaccounted
             </span>
           </div>
         )}
@@ -170,8 +160,8 @@ export default function Exceptions() {
         title="Over Contracted Allocation"
         color="yellow"
         icon="📈"
-        items={exceptions.overallocated}
-        description="Sports with more units than contracted. May need redistribution."
+        items={exceptions.overAllocated}
+        description="Sports with more units on record than contracted. May need redistribution."
         renderItem={item => (
           <div className="flex items-center justify-between">
             <div>
@@ -179,7 +169,7 @@ export default function Exceptions() {
               <span className="text-gray-400 text-xs ml-2">{item.practitioner}</span>
             </div>
             <span className="text-sm text-yellow-600 font-medium">
-              {item.accounted_for} of {item.contracted_units} · +{item.allocation_delta} over
+              {item.total_on_record} of {item.contracted_units} · +{item.total_on_record - item.contracted_units} over
             </span>
           </div>
         )}
@@ -190,7 +180,7 @@ export default function Exceptions() {
         color="yellow"
         icon="🔧"
         items={exceptions.brokenNotReturned}
-        description="These units have been marked broken for more than 30 days and have not been transferred to the department."
+        description="These units have been marked broken with the sport for more than 30 days and have not been transferred to the department."
         renderItem={item => (
           <div
             className="flex items-center justify-between cursor-pointer hover:text-blue-600"
@@ -208,11 +198,11 @@ export default function Exceptions() {
       />
 
       <ExceptionSection
-        title="Lost / Missing Units"
+        title="Lost Units"
         color="red"
         icon="❓"
         items={exceptions.lost}
-        description="Units flagged as lost or missing. These remain in the system but reduce the sport's effective inventory."
+        description="Units flagged as lost. This is a terminal status — these remain in the system but reduce the sport's effective inventory."
         renderItem={item => (
           <div
             className="flex items-center justify-between cursor-pointer hover:text-blue-600"
@@ -224,44 +214,6 @@ export default function Exceptions() {
             </div>
             <span className="text-sm text-gray-400">
               Since {new Date(item.updated_at).toLocaleDateString()}
-            </span>
-          </div>
-        )}
-      />
-
-      <ExceptionSection
-        title="Athletes with Multiple Units"
-        color="yellow"
-        icon="👤"
-        items={exceptions.multipleUnits}
-        description="Athletes with more than one active unit assignment. Each athlete should hold exactly one unit."
-        renderItem={item => (
-          <div className="flex items-center justify-between">
-            <div>
-              <span className="font-medium text-gray-800">{item.athlete_name}</span>
-              <span className="text-gray-400 text-xs ml-2">{item.sport}</span>
-            </div>
-            <span className="text-sm text-yellow-600 font-medium">
-              {item.units.length} units assigned
-            </span>
-          </div>
-        )}
-      />
-
-      <ExceptionSection
-        title="Units with Multiple Active Assignments"
-        color="red"
-        icon="🔁"
-        items={exceptions.unitsMultiAthlete}
-        description="Units assigned to more than one athlete simultaneously. This should never happen — requires immediate correction."
-        renderItem={item => (
-          <div
-            className="flex items-center justify-between cursor-pointer hover:text-blue-600"
-            onClick={() => navigate(`/unit/${item.unit_id}`)}
-          >
-            <span className="font-mono text-xs text-gray-800">{item.unit_id}</span>
-            <span className="text-sm text-red-600">
-              Assigned to: {item.athletes.join(', ')}
             </span>
           </div>
         )}
