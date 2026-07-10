@@ -55,20 +55,23 @@ export default function UnitDetail() {
   const navigate = useNavigate()
   const [unit, setUnit] = useState(null)
   const [sport, setSport] = useState(null)
+  const [allSports, setAllSports] = useState([])
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
 
   // Action modals
-  const [showBroken,      setShowBroken]      = useState(false)
-  const [showLost,        setShowLost]        = useState(false)
-  const [showMarkSpare,   setShowMarkSpare]   = useState(false)
-  const [showMarkInUse,   setShowMarkInUse]   = useState(false)
-  const [showTransferDept,setShowTransferDept]= useState(false)
-  const [showReturnPD,    setShowReturnPD]    = useState(false)
-  const [showConvert,     setShowConvert]     = useState(false)
-  const [actionNotes,     setActionNotes]     = useState('')
-  const [firmware,        setFirmware]        = useState('')
-  const [saving,          setSaving]          = useState(false)
+  const [showBroken,        setShowBroken]        = useState(false)
+  const [showLost,          setShowLost]          = useState(false)
+  const [showMarkSpare,     setShowMarkSpare]     = useState(false)
+  const [showMarkInUse,     setShowMarkInUse]     = useState(false)
+  const [showTransferDept,  setShowTransferDept]  = useState(false)
+  const [showTransferSport, setShowTransferSport] = useState(false)
+  const [showReturnPD,      setShowReturnPD]      = useState(false)
+  const [showConvert,       setShowConvert]       = useState(false)
+  const [actionNotes,       setActionNotes]       = useState('')
+  const [firmware,          setFirmware]          = useState('')
+  const [targetSportId,     setTargetSportId]     = useState('')
+  const [saving,            setSaving]            = useState(false)
 
   useEffect(() => {
     fetchData()
@@ -99,6 +102,12 @@ export default function UnitDetail() {
         .eq('unit_id', unitId)
         .order('created_at', { ascending: false })
       setEvents(eventsData || [])
+
+      const { data: sportsData } = await supabase
+        .from('sports')
+        .select('id, name')
+        .order('name')
+      setAllSports(sportsData || [])
     }
 
     setLoading(false)
@@ -137,6 +146,36 @@ export default function UnitDetail() {
   const handleMarkInUse    = () => applyStatus('assigned', 'marked_in_use', setShowMarkInUse)
   const handleTransferDept = () => applyStatus('broken_with_dept', 'transferred_to_dept', setShowTransferDept)
   const handleReturnToPD   = () => applyStatus('at_playerdata', 'returned_to_vendor', setShowReturnPD)
+
+  async function handleTransferSport() {
+    if (!targetSportId) return
+    setSaving(true)
+
+    const fromSport = sport
+    const toSport = allSports.find(s => s.id === targetSportId)
+
+    const { error } = await supabase
+      .from('units')
+      .update({ sport_id: targetSportId })
+      .eq('id', unitId)
+
+    if (!error) {
+      // Sport transfers don't change status, so from_status/to_status are
+      // left blank — the move itself is described in notes instead.
+      await supabase.from('events').insert({
+        unit_id:     unitId,
+        event_type:  'transferred_to_sport',
+        actor_sport: fromSport?.name || 'Unknown',
+        notes:       `Transferred from ${fromSport?.name || 'Unknown'} to ${toSport?.name || 'Unknown'}.${actionNotes ? ' ' + actionNotes : ''}`,
+      })
+    }
+
+    setSaving(false)
+    setShowTransferSport(false)
+    setActionNotes('')
+    setTargetSportId('')
+    fetchData()
+  }
 
   async function handleConvertType() {
     setSaving(true)
@@ -238,6 +277,12 @@ export default function UnitDetail() {
               <button onClick={() => setShowLost(true)}
                 className="px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50">
                 Mark Lost
+              </button>
+            )}
+            {!isTerminal && (
+              <button onClick={() => setShowTransferSport(true)}
+                className="px-3 py-1.5 text-sm border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50">
+                Transfer to Sport
               </button>
             )}
             <button onClick={() => setShowConvert(true)}
@@ -452,6 +497,48 @@ export default function UnitDetail() {
             <button onClick={handleReturnToPD} disabled={saving}
               className="px-4 py-2 text-sm bg-gray-700 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50">
               {saving ? 'Saving...' : 'Confirm — Send to PlayerData'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {showTransferSport && (
+        <Modal title="Transfer to Sport" onClose={() => { setShowTransferSport(false); setTargetSportId(''); setActionNotes('') }}>
+          <p className="text-sm text-gray-600 mb-3">
+            This moves the unit to a different sport's inventory. Its status ({STATUS_LABELS[unit.status]}) stays the same — only the sport assignment changes.
+          </p>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Transfer to *</label>
+              <select
+                value={targetSportId}
+                onChange={e => setTargetSportId(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              >
+                <option value="">— Select sport —</option>
+                {allSports.filter(s => s.id !== unit.sport_id).map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
+              <textarea
+                placeholder="e.g. Reallocated per updated contract split"
+                value={actionNotes}
+                onChange={e => setActionNotes(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-16 resize-none focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={() => { setShowTransferSport(false); setTargetSportId(''); setActionNotes('') }}
+              className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
+              Cancel
+            </button>
+            <button onClick={handleTransferSport} disabled={saving || !targetSportId}
+              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+              {saving ? 'Saving...' : 'Confirm — Transfer'}
             </button>
           </div>
         </Modal>
