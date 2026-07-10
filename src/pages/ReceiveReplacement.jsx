@@ -299,12 +299,20 @@ function ReplaceUnit({ sports, spareUnits, allUnits, onSuccess }) {
         .slice(0, 8)
     : []
 
+  // Mirrors check_status_transition() from migration 06. Note that
+  // 'spare' can NOT transition directly to 'lost' — only 'assigned' can.
   function validTransitions(status) {
-    if (status === 'assigned' || status === 'spare')
+    if (status === 'assigned')
       return [
         { value: 'broken_with_sport', label: 'Broken — with sport' },
         { value: 'broken_with_dept',  label: 'Broken — with dept' },
         { value: 'lost',              label: 'Lost (confirmed)' },
+        { value: 'spare',             label: 'Return to spare pool' },
+      ]
+    if (status === 'spare')
+      return [
+        { value: 'broken_with_sport', label: 'Broken — with sport' },
+        { value: 'broken_with_dept',  label: 'Broken — with dept' },
       ]
     if (status === 'broken_with_sport')
       return [
@@ -316,6 +324,18 @@ function ReplaceUnit({ sports, spareUnits, allUnits, onSuccess }) {
         { value: 'at_playerdata', label: 'Shipped back to PlayerData' },
       ]
     return []
+  }
+
+  // Maps a target status to the actual valid event_type for logging it
+  function eventTypeForStatus(toStatus) {
+    switch (toStatus) {
+      case 'broken_with_sport': return 'marked_broken'
+      case 'broken_with_dept':  return 'transferred_to_dept'
+      case 'at_playerdata':     return 'returned_to_vendor'
+      case 'lost':              return 'marked_lost'
+      case 'spare':             return 'marked_spare'
+      default:                  return 'status_corrected'
+    }
   }
 
   const filteredSpares = spareUnits.filter(u => {
@@ -355,7 +375,7 @@ function ReplaceUnit({ sports, spareUnits, allUnits, onSuccess }) {
 
     await supabase.from('events').insert({
       unit_id:     selectedUnit.id,
-      event_type:  'status_changed',
+      event_type:  eventTypeForStatus(newStatus),
       event_date:  eventDate,
       from_status: selectedUnit.status,
       to_status:   newStatus,
@@ -387,8 +407,9 @@ function ReplaceUnit({ sports, spareUnits, allUnits, onSuccess }) {
     const { error: replError } = await supabase
       .from('units')
       .update({
-        status:   'assigned',
-        sport_id: selectedUnit.sport_id,
+        status:          'assigned',
+        sport_id:        selectedUnit.sport_id,
+        replacement_for: selectedUnit.id,
       })
       .eq('id', replUnit.id)
 
@@ -398,10 +419,15 @@ function ReplaceUnit({ sports, spareUnits, allUnits, onSuccess }) {
       return
     }
 
+    await supabase
+      .from('units')
+      .update({ replaced_by: replUnit.id })
+      .eq('id', selectedUnit.id)
+
     await supabase.from('events').insert([
       {
         unit_id:              selectedUnit.id,
-        event_type:           'unit_replaced',
+        event_type:           'replacement_received',
         event_date:           replEventDate,
         replaced_by_unit_id:  replUnit.id,
         replacement_source:   replSource,
@@ -410,7 +436,7 @@ function ReplaceUnit({ sports, spareUnits, allUnits, onSuccess }) {
       },
       {
         unit_id:     replUnit.id,
-        event_type:  'assigned_as_replacement',
+        event_type:  'spare_assigned',
         event_date:  replEventDate,
         from_status: 'spare',
         to_status:   'assigned',
@@ -567,7 +593,7 @@ function ReplaceUnit({ sports, spareUnits, allUnits, onSuccess }) {
                 <textarea
                   value={statusNotes}
                   onChange={e => setStatusNotes(e.target.value)}
-                  placeholder="e.g. Athlete reported device stopped charging"
+                  placeholder="e.g. Device stopped charging"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-20 resize-none focus:outline-none focus:ring-2 focus:ring-blue-200"
                 />
               </div>
