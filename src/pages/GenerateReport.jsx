@@ -123,7 +123,7 @@ function SportSnapshot({ sports }) {
 
     let query = supabase
       .from('units')
-      .select('serial_number, status, unit_type, sport_id, sports(name), assignments(athlete_name, assigned_date)')
+      .select('serial_number, status, unit_type, sport_id, acquired_date, sports(name)')
       .eq('sport_id', sportId)
       .order('serial_number')
 
@@ -132,18 +132,13 @@ function SportSnapshot({ sports }) {
     const { data, error: err } = await query
     if (err) { setError(err.message); setLoading(false); return }
 
-    const now = new Date()
-    const out = (data || []).map(u => {
-      const assignment = u.assignments?.[u.assignments.length - 1]
-      return {
-        serial_number:      u.serial_number,
-        unit_type:          u.unit_type,
-        status:             u.status?.replace(/_/g, ' '),
-        athlete:            assignment?.athlete_name ?? '—',
-        assigned_date:      assignment?.assigned_date ?? '—',
-        sport:              u.sports?.name,
-      }
-    })
+    const out = (data || []).map(u => ({
+      serial_number:  u.serial_number,
+      unit_type:      u.unit_type,
+      status:         u.status?.replace(/_/g, ' '),
+      acquired_date:  u.acquired_date ?? '—',
+      sport:          u.sports?.name,
+    }))
 
     setRows(out)
     setLoading(false)
@@ -282,112 +277,9 @@ function UnitHistory({ sports }) {
   )
 }
 
-// ── Report 3: Athlete Unit Changes ──────────────────────────
-function AthleteChanges({ sports }) {
-  const [sportId, setSportId]       = useState('')
-  const [athleteSearch, setAthleteSearch] = useState('')
-  const [startDate, setStartDate]   = useState(startOfYear())
-  const [endDate, setEndDate]       = useState(today())
-  const [rows, setRows]             = useState(null)
-  const [loading, setLoading]       = useState(false)
-  const [error, setError]           = useState('')
-
-  async function generate() {
-    if (!sportId) { setError('Select a sport.'); return }
-    setError('')
-    setLoading(true)
-    setRows(null)
-
-    let query = supabase
-      .from('events')
-      .select('event_date, event_type, from_status, to_status, notes, units(serial_number, sport_id, sports(name)), athlete_name')
-      .eq('units.sport_id', sportId)
-      .in('event_type', ['assigned_to_athlete', 'unassigned_from_athlete', 'assigned_as_replacement', 'unit_replaced'])
-      .gte('event_date', startDate)
-      .lte('event_date', endDate)
-      .order('athlete_name', { ascending: true })
-
-    const { data, error: err } = await query
-    if (err) { setError(err.message); setLoading(false); return }
-
-    let out = (data || [])
-      .filter(e => e.units?.sport_id === sportId)
-      .map(e => ({
-        athlete:        e.athlete_name ?? '—',
-        serial_number:  e.units?.serial_number,
-        event_type:     e.event_type?.replace(/_/g, ' '),
-        from_status:    e.from_status?.replace(/_/g, ' ') ?? '—',
-        to_status:      e.to_status?.replace(/_/g, ' ') ?? '—',
-        event_date:     e.event_date,
-        notes:          e.notes ?? '—',
-      }))
-
-    if (athleteSearch.trim()) {
-      out = out.filter(r =>
-        r.athlete.toLowerCase().includes(athleteSearch.toLowerCase())
-      )
-    }
-
-    // Sort by athlete name then date
-    out.sort((a, b) => a.athlete.localeCompare(b.athlete) || a.event_date.localeCompare(b.event_date))
-
-    setRows(out)
-    setLoading(false)
-  }
-
-  return (
-    <ReportCard
-      number="3"
-      title="Athlete unit changes"
-      sub="How many times athletes changed units — sortable by athlete name"
-    >
-      <FilterRow>
-        <FilterField label="Sport">
-          <select value={sportId} onChange={e => setSportId(e.target.value)} className={inputClass}>
-            <option value="">— Select sport —</option>
-            {sports.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </FilterField>
-        <FilterField label="Athlete name (optional)">
-          <input
-            type="text"
-            value={athleteSearch}
-            onChange={e => setAthleteSearch(e.target.value)}
-            placeholder="Filter by name..."
-            className={inputClass}
-          />
-        </FilterField>
-        <FilterField label="From">
-          <input type="date" value={startDate} max={endDate} onChange={e => setStartDate(e.target.value)} className={inputClass} />
-        </FilterField>
-        <FilterField label="To">
-          <input type="date" value={endDate} min={startDate} max={today()} onChange={e => setEndDate(e.target.value)} className={inputClass} />
-        </FilterField>
-        <FilterField label=" ">
-          <ExportButton
-            onClick={async () => { await generate() }}
-            loading={loading}
-            count={rows?.length ?? null}
-          />
-        </FilterField>
-      </FilterRow>
-      {error && <p className="text-xs text-red-500">{error}</p>}
-      {rows && (
-        <>
-          <PreviewTable rows={rows} />
-          <button
-            onClick={() => downloadCSV(rows, `athlete_changes_${sports.find(s=>s.id===sportId)?.name}_${startDate}_${endDate}.csv`)}
-            className="text-xs text-[#0057B8] underline"
-          >
-            Download {rows.length} rows as CSV
-          </button>
-        </>
-      )}
-    </ReportCard>
-  )
-}
-
-// ── Report 4: Status Change Activity ───────────────────────
+// ── Report 3: Status Change Activity ───────────────────────
+// Formerly "Report 4" — "Athlete Unit Changes" (old Report 3) was
+// removed entirely since athlete tracking no longer exists.
 function StatusActivity({ sports }) {
   const [sportId, setSportId]       = useState('')
   const [startDate, setStartDate]   = useState(startOfYear())
@@ -397,6 +289,11 @@ function StatusActivity({ sports }) {
   const [loading, setLoading]       = useState(false)
   const [error, setError]           = useState('')
 
+  // Event types that represent a manual status change via the
+  // Replace a Unit workflow — 'status_changed' was never a valid
+  // event_type in the schema, so it's replaced with the real list.
+  const STATUS_CHANGE_EVENTS = ['marked_broken', 'transferred_to_dept', 'returned_to_vendor', 'marked_lost', 'marked_in_use', 'marked_spare', 'status_corrected']
+
   async function generate() {
     if (!sportId) { setError('Select a sport.'); return }
     setError('')
@@ -405,9 +302,9 @@ function StatusActivity({ sports }) {
 
     let query = supabase
       .from('events')
-      .select('event_date, created_at, event_type, from_status, to_status, notes, units(serial_number, sport_id, sports(name)), athlete_name')
+      .select('event_date, created_at, event_type, from_status, to_status, notes, units(serial_number, sport_id, sports(name))')
       .eq('units.sport_id', sportId)
-      .eq('event_type', 'status_changed')
+      .in('event_type', STATUS_CHANGE_EVENTS)
       .gte('event_date', startDate)
       .lte('event_date', endDate)
       .order('event_date', { ascending: false })
@@ -421,7 +318,7 @@ function StatusActivity({ sports }) {
         event_date:     e.event_date,
         logged_date:    e.created_at?.split('T')[0],
         serial_number:  e.units?.serial_number,
-        athlete:        e.athlete_name ?? '—',
+        event_type:     e.event_type?.replace(/_/g, ' '),
         from_status:    e.from_status?.replace(/_/g, ' ') ?? '—',
         to_status:      e.to_status?.replace(/_/g, ' ') ?? '—',
         notes:          e.notes ?? '—',
@@ -437,7 +334,7 @@ function StatusActivity({ sports }) {
 
   return (
     <ReportCard
-      number="4"
+      number="3"
       title="Status change activity"
       sub="How many times unit statuses changed this season — volume and frequency"
     >
@@ -451,6 +348,8 @@ function StatusActivity({ sports }) {
         <FilterField label="Status changed to">
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className={inputClass}>
             <option value="all">Any status change</option>
+            <option value="assigned">Assigned</option>
+            <option value="spare">Spare</option>
             <option value="broken_with_sport">Broken — with sport</option>
             <option value="broken_with_dept">Broken — with dept</option>
             <option value="at_playerdata">At PlayerData</option>
@@ -511,7 +410,6 @@ export default function GenerateReport() {
 
       <SportSnapshot sports={sports} />
       <UnitHistory sports={sports} />
-      <AthleteChanges sports={sports} />
       <StatusActivity sports={sports} />
     </div>
   )
