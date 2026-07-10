@@ -28,8 +28,8 @@ const STATUS_COLORS = {
 
 const EVENT_LABELS = {
   unit_entered_inventory:   '📦 Entered inventory',
-  assigned_to_athlete:      '👤 Assigned to athlete',
-  unassigned_from_athlete:  '↩️ Unassigned from athlete',
+  marked_in_use:            '✅ Marked in use',
+  marked_spare:             '↩️ Marked spare',
   transferred_to_sport:     '🔀 Transferred to sport',
   transferred_to_dept:      '🏢 Transferred to dept',
   marked_broken:            '🔧 Marked broken',
@@ -51,21 +51,18 @@ export default function UnitDetail() {
   const [unit, setUnit] = useState(null)
   const [sport, setSport] = useState(null)
   const [events, setEvents] = useState([])
-  const [assignments, setAssignments] = useState([])
-  const [activeAssignment, setActiveAssignment] = useState(null)
   const [loading, setLoading] = useState(true)
 
   // Action modals
-  const [showBroken,     setShowBroken]     = useState(false)
-  const [showLost,       setShowLost]       = useState(false)
-  const [showUnassign,   setShowUnassign]   = useState(false)
-  const [showAssign,     setShowAssign]     = useState(false)
-  const [showReturnDept, setShowReturnDept] = useState(false)
-  const [showConvert,    setShowConvert]    = useState(false)
-  const [actionNotes,    setActionNotes]    = useState('')
-  const [athleteName,    setAthleteName]    = useState('')
-  const [firmware,       setFirmware]       = useState('')
-  const [saving,         setSaving]         = useState(false)
+  const [showBroken,      setShowBroken]      = useState(false)
+  const [showLost,        setShowLost]        = useState(false)
+  const [showMarkSpare,   setShowMarkSpare]   = useState(false)
+  const [showMarkInUse,   setShowMarkInUse]   = useState(false)
+  const [showReturnDept,  setShowReturnDept]  = useState(false)
+  const [showConvert,     setShowConvert]     = useState(false)
+  const [actionNotes,     setActionNotes]     = useState('')
+  const [firmware,        setFirmware]        = useState('')
+  const [saving,          setSaving]          = useState(false)
 
   useEffect(() => {
     fetchData()
@@ -96,16 +93,6 @@ export default function UnitDetail() {
         .eq('unit_id', unitId)
         .order('created_at', { ascending: false })
       setEvents(eventsData || [])
-
-      const { data: assignData } = await supabase
-        .from('assignments')
-        .select('*')
-        .eq('unit_id', unitId)
-        .order('start_date', { ascending: false })
-      setAssignments(assignData || [])
-
-      const active = assignData?.find(a => !a.end_date)
-      setActiveAssignment(active || null)
     }
 
     setLoading(false)
@@ -125,12 +112,7 @@ export default function UnitDetail() {
   async function handleMarkBroken() {
     setSaving(true)
     await supabase.from('units').update({ status: 'broken_held' }).eq('id', unitId)
-    if (activeAssignment) {
-      await supabase.from('assignments')
-        .update({ end_date: new Date().toISOString().split('T')[0], end_reason: 'unit_broke' })
-        .eq('id', activeAssignment.id)
-    }
-    await logEvent('marked_broken', { to_status: 'broken_held', athlete_name: activeAssignment?.athlete_name })
+    await logEvent('marked_broken', { to_status: 'broken_held' })
     setSaving(false)
     setShowBroken(false)
     setActionNotes('')
@@ -140,11 +122,6 @@ export default function UnitDetail() {
   async function handleMarkLost() {
     setSaving(true)
     await supabase.from('units').update({ status: 'lost_missing' }).eq('id', unitId)
-    if (activeAssignment) {
-      await supabase.from('assignments')
-        .update({ end_date: new Date().toISOString().split('T')[0], end_reason: 'other' })
-        .eq('id', activeAssignment.id)
-    }
     await logEvent('marked_lost', { to_status: 'lost_missing' })
     setSaving(false)
     setShowLost(false)
@@ -152,41 +129,23 @@ export default function UnitDetail() {
     fetchData()
   }
 
-  async function handleUnassign() {
+  async function handleMarkSpare() {
     setSaving(true)
     await supabase.from('units').update({ status: 'unassigned_sport' }).eq('id', unitId)
-    await supabase.from('assignments')
-      .update({ end_date: new Date().toISOString().split('T')[0], end_reason: 'athlete_left' })
-      .eq('id', activeAssignment.id)
-    await logEvent('unassigned_from_athlete', {
-      to_status:    'unassigned_sport',
-      athlete_name: activeAssignment.athlete_name,
-    })
+    await logEvent('marked_spare', { to_status: 'unassigned_sport' })
     setSaving(false)
-    setShowUnassign(false)
+    setShowMarkSpare(false)
     setActionNotes('')
     fetchData()
   }
 
-  async function handleAssign() {
-    if (!athleteName.trim()) return
+  async function handleMarkInUse() {
     setSaving(true)
     await supabase.from('units').update({ status: 'assigned' }).eq('id', unitId)
-    await supabase.from('assignments').insert({
-      unit_id:      unitId,
-      athlete_name: athleteName.trim(),
-      sport_id:     unit.sport_id,
-      start_date:   new Date().toISOString().split('T')[0],
-      notes:        actionNotes,
-    })
-    await logEvent('assigned_to_athlete', {
-      to_status:    'assigned',
-      athlete_name: athleteName.trim(),
-    })
+    await logEvent('marked_in_use', { to_status: 'assigned' })
     setSaving(false)
-    setShowAssign(false)
+    setShowMarkInUse(false)
     setActionNotes('')
-    setAthleteName('')
     fetchData()
   }
 
@@ -266,9 +225,9 @@ export default function UnitDetail() {
           <div className="flex flex-wrap gap-2">
             {unit.status === 'assigned' && (
               <>
-                <button onClick={() => setShowUnassign(true)}
+                <button onClick={() => setShowMarkSpare(true)}
                   className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
-                  Unassign Athlete
+                  Mark Spare
                 </button>
                 <button onClick={() => setShowBroken(true)}
                   className="px-3 py-1.5 text-sm border border-yellow-300 text-yellow-700 rounded-lg hover:bg-yellow-50">
@@ -277,9 +236,9 @@ export default function UnitDetail() {
               </>
             )}
             {(unit.status === 'unassigned_sport' || unit.status === 'unassigned_dept') && (
-              <button onClick={() => setShowAssign(true)}
+              <button onClick={() => setShowMarkInUse(true)}
                 className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                Assign to Athlete
+                Mark In Use
               </button>
             )}
             {unit.status === 'unassigned_sport' && (
@@ -307,18 +266,6 @@ export default function UnitDetail() {
           </div>
         </div>
 
-        {/* Active assignment */}
-        {activeAssignment && (
-          <div className="mt-4 p-3 bg-green-50 rounded-lg border border-green-200">
-            <div className="text-sm font-medium text-green-800">
-              Currently assigned to: {activeAssignment.athlete_name}
-            </div>
-            <div className="text-xs text-green-600 mt-0.5">
-              Since {new Date(activeAssignment.start_date).toLocaleDateString()}
-            </div>
-          </div>
-        )}
-
         {/* Unit meta */}
         <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
           <div>
@@ -338,35 +285,6 @@ export default function UnitDetail() {
         </div>
       </div>
 
-      {/* Assignment history */}
-      {assignments.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-base font-semibold text-gray-800 mb-4">Assignment History</h2>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100">
-                <th className="text-left pb-2 font-medium text-gray-500">Athlete</th>
-                <th className="text-left pb-2 font-medium text-gray-500">Start</th>
-                <th className="text-left pb-2 font-medium text-gray-500">End</th>
-                <th className="text-left pb-2 font-medium text-gray-500">Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {assignments.map(a => (
-                <tr key={a.id} className="border-b border-gray-50">
-                  <td className="py-2 text-gray-800 font-medium">{a.athlete_name}</td>
-                  <td className="py-2 text-gray-500">{new Date(a.start_date).toLocaleDateString()}</td>
-                  <td className="py-2 text-gray-500">
-                    {a.end_date ? new Date(a.end_date).toLocaleDateString() : <span className="text-green-600 font-medium">Active</span>}
-                  </td>
-                  <td className="py-2 text-gray-400 capitalize">{a.end_reason?.replace(/_/g, ' ') || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
       {/* Event log */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <h2 className="text-base font-semibold text-gray-800 mb-4">Unit History</h2>
@@ -384,9 +302,6 @@ export default function UnitDetail() {
                   <div className="font-medium text-gray-800">
                     {EVENT_LABELS[event.event_type] || event.event_type}
                   </div>
-                  {event.athlete_name && (
-                    <div className="text-gray-500 text-xs">Athlete: {event.athlete_name}</div>
-                  )}
                   {event.from_status && event.to_status && (
                     <div className="text-gray-400 text-xs">
                       {STATUS_LABELS[event.from_status]} → {STATUS_LABELS[event.to_status]}
@@ -411,8 +326,7 @@ export default function UnitDetail() {
       {showBroken && (
         <Modal title="Mark Unit as Broken" onClose={() => { setShowBroken(false); setActionNotes('') }}>
           <p className="text-sm text-gray-600 mb-3">
-            This will mark the unit as broken and close any active athlete assignment.
-            The unit will remain with your sport until collected by the dept lead.
+            This will mark the unit as broken. It will remain with your sport until collected by the dept lead.
           </p>
           <textarea
             placeholder="Describe the damage (optional)..."
@@ -459,12 +373,11 @@ export default function UnitDetail() {
         </Modal>
       )}
 
-      {/* Unassign */}
-      {showUnassign && (
-        <Modal title="Unassign Athlete" onClose={() => { setShowUnassign(false); setActionNotes('') }}>
+      {/* Mark Spare */}
+      {showMarkSpare && (
+        <Modal title="Mark Spare" onClose={() => { setShowMarkSpare(false); setActionNotes('') }}>
           <p className="text-sm text-gray-600 mb-3">
-            This will end the assignment for <strong>{activeAssignment?.athlete_name}</strong> and
-            return the unit to the sport's spare pool.
+            This will move the unit into the sport's spare pool.
           </p>
           <textarea
             placeholder="Reason (optional)..."
@@ -473,50 +386,38 @@ export default function UnitDetail() {
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-20 resize-none focus:outline-none focus:ring-2 focus:ring-blue-300"
           />
           <div className="flex justify-end gap-2 mt-4">
-            <button onClick={() => { setShowUnassign(false); setActionNotes('') }}
+            <button onClick={() => { setShowMarkSpare(false); setActionNotes('') }}
               className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
               Cancel
             </button>
-            <button onClick={handleUnassign} disabled={saving}
+            <button onClick={handleMarkSpare} disabled={saving}
               className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
-              {saving ? 'Saving...' : 'Confirm — Unassign'}
+              {saving ? 'Saving...' : 'Confirm — Mark Spare'}
             </button>
           </div>
         </Modal>
       )}
 
-      {/* Assign to Athlete */}
-      {showAssign && (
-        <Modal title="Assign to Athlete" onClose={() => { setShowAssign(false); setAthleteName(''); setActionNotes('') }}>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Athlete Name *</label>
-              <input
-                type="text"
-                placeholder="Last, First"
-                value={athleteName}
-                onChange={e => setAthleteName(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
-              <textarea
-                placeholder="Any relevant notes..."
-                value={actionNotes}
-                onChange={e => setActionNotes(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-16 resize-none focus:outline-none focus:ring-2 focus:ring-blue-300"
-              />
-            </div>
-          </div>
+      {/* Mark In Use */}
+      {showMarkInUse && (
+        <Modal title="Mark In Use" onClose={() => { setShowMarkInUse(false); setActionNotes('') }}>
+          <p className="text-sm text-gray-600 mb-3">
+            This will move the unit from the spare pool into active use for {sport?.name}.
+          </p>
+          <textarea
+            placeholder="Notes (optional)..."
+            value={actionNotes}
+            onChange={e => setActionNotes(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-20 resize-none focus:outline-none focus:ring-2 focus:ring-blue-300"
+          />
           <div className="flex justify-end gap-2 mt-4">
-            <button onClick={() => { setShowAssign(false); setAthleteName(''); setActionNotes('') }}
+            <button onClick={() => { setShowMarkInUse(false); setActionNotes('') }}
               className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">
               Cancel
             </button>
-            <button onClick={handleAssign} disabled={saving || !athleteName.trim()}
+            <button onClick={handleMarkInUse} disabled={saving}
               className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50">
-              {saving ? 'Saving...' : 'Confirm — Assign'}
+              {saving ? 'Saving...' : 'Confirm — Mark In Use'}
             </button>
           </div>
         </Modal>
