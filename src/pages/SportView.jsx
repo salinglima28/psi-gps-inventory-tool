@@ -3,27 +3,35 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 
 const STATUS_LABELS = {
-  assigned:             'Assigned',
-  unassigned_sport:     'Spare',
-  unassigned_dept:      'Dept Holding',
-  broken_held:          'Broken (With Sport)',
-  broken_dept:          'Broken (With Dept)',
-  returned_to_vendor:   'Returned to PlayerData',
-  replacement_pending:  'Replacement Pending',
-  lost_missing:         'Lost / Missing',
-  retired:              'Retired',
+  assigned:           'Assigned',
+  spare:              'Spare',
+  broken_with_sport:  'Broken (With Sport)',
+  broken_with_dept:   'Broken (With Dept)',
+  at_playerdata:      'At PlayerData',
+  lost:               'Lost',
 }
 
 const STATUS_COLORS = {
-  assigned:             'bg-green-100 text-green-700',
-  unassigned_sport:     'bg-blue-100 text-blue-700',
-  unassigned_dept:      'bg-purple-100 text-purple-700',
-  broken_held:          'bg-yellow-100 text-yellow-700',
-  broken_dept:          'bg-orange-100 text-orange-700',
-  returned_to_vendor:   'bg-gray-100 text-gray-600',
-  replacement_pending:  'bg-gray-100 text-gray-600',
-  lost_missing:         'bg-red-100 text-red-700',
-  retired:              'bg-gray-100 text-gray-400',
+  assigned:           'bg-green-100 text-green-700',
+  spare:              'bg-blue-100 text-blue-700',
+  broken_with_sport:  'bg-yellow-100 text-yellow-700',
+  broken_with_dept:   'bg-orange-100 text-orange-700',
+  at_playerdata:      'bg-gray-100 text-gray-600',
+  lost:               'bg-red-100 text-red-700',
+}
+
+const HEALTH_LABELS = {
+  unaccounted: 'Unaccounted for units',
+  no_spare:    'No spares available',
+  low_spare:   'Low on spares',
+  ok:          'Healthy',
+}
+
+const HEALTH_COLORS = {
+  unaccounted: 'bg-red-50 border-red-200 text-red-600',
+  no_spare:    'bg-red-50 border-red-200 text-red-600',
+  low_spare:   'bg-amber-50 border-amber-200 text-amber-600',
+  ok:          'bg-green-50 border-green-200 text-green-600',
 }
 
 export default function SportView() {
@@ -69,7 +77,6 @@ export default function SportView() {
         notes
       `)
       .eq('sport_id', sportId)
-      .neq('status', 'retired')
       .order('serial_number')
 
     setSport(sportData)
@@ -86,6 +93,14 @@ export default function SportView() {
     return statusOk && typeOk && searchOk
   })
 
+  // GPS/IMU breakdown computed client-side — the live sport_allocation
+  // view doesn't carry these columns (only 01/05's version did; the
+  // 06 migration replaced the view without them)
+  const gpsCount = units.filter(u => u.unit_type === 'GPS').length
+  const imuCount = units.filter(u => u.unit_type === 'IMU').length
+  const gpsActive = units.filter(u => u.unit_type === 'GPS' && ['assigned', 'spare'].includes(u.status)).length
+  const imuActive = units.filter(u => u.unit_type === 'IMU' && ['assigned', 'spare'].includes(u.status)).length
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 text-gray-400">
@@ -101,6 +116,8 @@ export default function SportView() {
       </div>
     )
   }
+
+  const brokenTotal = (allocation?.broken_with_sport || 0) + (allocation?.broken_with_dept || 0)
 
   return (
     <div className="space-y-6">
@@ -136,43 +153,47 @@ export default function SportView() {
             <div className="text-2xl font-bold text-green-700">{allocation.assigned}</div>
             <div className="text-xs text-gray-500 mt-1">Assigned</div>
           </div>
-          <div className={`border rounded-xl p-3 text-center ${allocation.zero_spares_warning ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>
-            <div className={`text-2xl font-bold ${allocation.zero_spares_warning ? 'text-red-600' : 'text-blue-600'}`}>
+          <div className={`border rounded-xl p-3 text-center ${['no_spare', 'unaccounted'].includes(allocation.health) ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>
+            <div className={`text-2xl font-bold ${['no_spare', 'unaccounted'].includes(allocation.health) ? 'text-red-600' : 'text-blue-600'}`}>
               {allocation.spare}
-              {allocation.zero_spares_warning && ' ⚠️'}
             </div>
             <div className="text-xs text-gray-500 mt-1">Spare</div>
           </div>
           <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-            <div className={`text-2xl font-bold ${allocation.broken_held > 0 ? 'text-yellow-600' : 'text-gray-400'}`}>
-              {allocation.broken_held}
+            <div className={`text-2xl font-bold ${brokenTotal > 0 ? 'text-yellow-600' : 'text-gray-400'}`}>
+              {brokenTotal}
             </div>
             <div className="text-xs text-gray-500 mt-1">Broken</div>
           </div>
-          <div className={`border rounded-xl p-3 text-center ${allocation.allocation_delta < 0 ? 'bg-red-50 border-red-200' : allocation.allocation_delta > 0 ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'}`}>
-            <div className={`text-2xl font-bold ${allocation.allocation_delta < 0 ? 'text-red-600' : allocation.allocation_delta > 0 ? 'text-blue-600' : 'text-green-600'}`}>
-              {allocation.allocation_delta > 0 ? `+${allocation.allocation_delta}` : allocation.allocation_delta}
+          <div className={`border rounded-xl p-3 text-center ${allocation.unaccounted_for > 0 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+            <div className={`text-2xl font-bold ${allocation.unaccounted_for > 0 ? 'text-red-600' : 'text-green-600'}`}>
+              {allocation.unaccounted_for}
             </div>
-            <div className="text-xs text-gray-500 mt-1">vs Contract</div>
+            <div className="text-xs text-gray-500 mt-1">Unaccounted</div>
           </div>
         </div>
       )}
 
-      {/* GPS vs IMU */}
-      {allocation && (
-        <div className="flex gap-3">
-          <div className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-sm">
-            <span className="font-medium text-gray-700">GPS:</span>{' '}
-            <span className="text-blue-600 font-semibold">{allocation.gps_count}</span>
-            <span className="text-gray-400 ml-1">({allocation.gps_active} active)</span>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-sm">
-            <span className="font-medium text-gray-700">IMU:</span>{' '}
-            <span className="text-purple-600 font-semibold">{allocation.imu_count}</span>
-            <span className="text-gray-400 ml-1">({allocation.imu_active} active)</span>
-          </div>
+      {/* Health flag */}
+      {allocation && allocation.health !== 'ok' && (
+        <div className={`border rounded-lg px-4 py-2 text-sm font-medium ${HEALTH_COLORS[allocation.health]}`}>
+          ⚠️ {HEALTH_LABELS[allocation.health]}
         </div>
       )}
+
+      {/* GPS vs IMU */}
+      <div className="flex gap-3">
+        <div className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-sm">
+          <span className="font-medium text-gray-700">GPS:</span>{' '}
+          <span className="text-blue-600 font-semibold">{gpsCount}</span>
+          <span className="text-gray-400 ml-1">({gpsActive} active)</span>
+        </div>
+        <div className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-sm">
+          <span className="font-medium text-gray-700">IMU:</span>{' '}
+          <span className="text-purple-600 font-semibold">{imuCount}</span>
+          <span className="text-gray-400 ml-1">({imuActive} active)</span>
+        </div>
+      </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
