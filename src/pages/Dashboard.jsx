@@ -38,6 +38,7 @@ function HealthBadge({ health, delta }) {
 export default function Dashboard() {
   const { selectedSports, sports } = useOutletContext()
   const [allocation, setAllocation] = useState([])
+  const [unitTypeTotals, setUnitTypeTotals] = useState({ gps_count: 0, gps_active: 0, imu_count: 0, imu_active: 0 })
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
@@ -45,12 +46,28 @@ export default function Dashboard() {
 
   async function fetchData() {
     setLoading(true)
+
     let query = supabase.from('sport_allocation').select('*').order('sport_name')
     if (selectedSports.length > 0) {
       query = query.in('sport_id', selectedSports)
     }
     const { data } = await query
     setAllocation(data || [])
+
+    // GPS/IMU breakdown isn't on sport_allocation (06 dropped those
+    // columns), so compute it here from the raw units table instead.
+    let unitsQuery = supabase.from('units').select('unit_type, status, sport_id')
+    if (selectedSports.length > 0) {
+      unitsQuery = unitsQuery.in('sport_id', selectedSports)
+    }
+    const { data: unitsData } = await unitsQuery
+
+    const gps_count  = unitsData?.filter(u => u.unit_type === 'GPS').length || 0
+    const imu_count  = unitsData?.filter(u => u.unit_type === 'IMU').length || 0
+    const gps_active = unitsData?.filter(u => u.unit_type === 'GPS' && ['assigned', 'spare'].includes(u.status)).length || 0
+    const imu_active = unitsData?.filter(u => u.unit_type === 'IMU' && ['assigned', 'spare'].includes(u.status)).length || 0
+    setUnitTypeTotals({ gps_count, gps_active, imu_count, imu_active })
+
     setLoading(false)
   }
 
@@ -87,15 +104,10 @@ export default function Dashboard() {
     at_playerdata:     acc.at_playerdata     + (r.at_playerdata      || 0),
     lost:              acc.lost              + (r.lost               || 0),
     unaccounted_for:   acc.unaccounted_for   + (r.unaccounted_for    || 0),
-    gps_count:         acc.gps_count         + (r.gps_count          || 0),
-    gps_active:        acc.gps_active        + (r.gps_active         || 0),
-    imu_count:         acc.imu_count         + (r.imu_count          || 0),
-    imu_active:        acc.imu_active        + (r.imu_active         || 0),
   }), {
     contracted: 0, assigned: 0, spare: 0,
     broken_with_sport: 0, broken_with_dept: 0,
     at_playerdata: 0, lost: 0, unaccounted_for: 0,
-    gps_count: 0, gps_active: 0, imu_count: 0, imu_active: 0,
   })
 
   // Show unit type breakdown only in all-sports or dept lead view
@@ -164,10 +176,10 @@ export default function Dashboard() {
             Unit type breakdown
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard label="Total GPS units" value={totals.gps_count}   variant="default" />
-            <StatCard label="GPS assigned"    value={totals.gps_active}  variant="default" />
-            <StatCard label="Total IMU units" value={totals.imu_count}   variant="default" />
-            <StatCard label="IMU assigned"    value={totals.imu_active}  variant="default" />
+            <StatCard label="Total GPS units" value={unitTypeTotals.gps_count}   variant="default" />
+            <StatCard label="GPS active"      value={unitTypeTotals.gps_active}  variant="default" />
+            <StatCard label="Total IMU units" value={unitTypeTotals.imu_count}   variant="default" />
+            <StatCard label="IMU active"      value={unitTypeTotals.imu_active}  variant="default" />
           </div>
         </div>
       )}
