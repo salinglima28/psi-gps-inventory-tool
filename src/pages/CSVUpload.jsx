@@ -3,7 +3,8 @@ import { useOutletContext } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import Papa from 'papaparse'
 
-const IS_SPARE = (name) => name?.trim().toLowerCase() === 'spare'
+const VALID_ASSIGNMENTS = ['assigned', 'spare']
+const IS_SPARE = (value) => value?.trim().toLowerCase() === 'spare'
 
 export default function CSVUpload() {
   const { sports } = useOutletContext()
@@ -45,8 +46,8 @@ export default function CSVUpload() {
 
     const cols = Object.keys(rows[0]).map(c => c.toLowerCase().trim())
     if (!cols.includes('serial_number')) hardErrors.push('Missing required column: serial_number')
-    if (!cols.includes('athlete_name'))  hardErrors.push('Missing required column: athlete_name')
     if (!cols.includes('sport'))         hardErrors.push('Missing required column: sport')
+    if (!cols.includes('assignment'))    hardErrors.push('Missing required column: assignment')
 
     if (hardErrors.length > 0) { setErrors(hardErrors); return }
 
@@ -71,6 +72,13 @@ export default function CSVUpload() {
       }
     })
 
+    // Invalid assignment values
+    normalized.forEach((row, i) => {
+      if (!VALID_ASSIGNMENTS.includes(row.assignment?.toLowerCase())) {
+        hardErrors.push(`Row ${i + 2}: Assignment must be "assigned" or "spare" — got "${row.assignment}".`)
+      }
+    })
+
     if (hardErrors.length > 0) { setErrors(hardErrors); return }
 
     // DB checks
@@ -80,20 +88,12 @@ export default function CSVUpload() {
       .select('id, serial_number, status, sport_id')
       .in('serial_number', serialList)
 
-    const { data: existingAssignments } = await supabase
-      .from('assignments')
-      .select('unit_id, athlete_name')
-      .is('end_date', null)
-
     const unitMap = {}
     existingUnits?.forEach(u => { unitMap[u.serial_number.toLowerCase()] = u })
 
-    const activeAthletes = {}
-    existingAssignments?.forEach(a => { activeAthletes[a.unit_id] = a.athlete_name })
-
     const previewRows = normalized.map((row, i) => {
       const existing = unitMap[row.serial_number.toLowerCase()]
-      const spare = IS_SPARE(row.athlete_name)
+      const spare = IS_SPARE(row.assignment)
       let rowWarnings = []
       let status = 'new'
 
@@ -106,11 +106,8 @@ export default function CSVUpload() {
         if (existingSport && existingSport.name.toLowerCase() !== row.sport.toLowerCase()) {
           rowWarnings.push(`Unit is currently with ${existingSport.name} — will transfer to ${row.sport}.`)
         }
-        if (['broken_with_sport', 'broken_with_dept', 'lost', 'at_playerdata'].includes(existing.status)) {
+        if (['broken_held', 'broken_dept', 'lost_missing', 'returned_to_vendor'].includes(existing.status)) {
           rowWarnings.push(`Unit status is currently "${existing.status.replace(/_/g, ' ')}" — uploading will reactivate it as ${spare ? 'spare' : 'assigned'}.`)
-        }
-        if (!spare && activeAthletes[existing.id] && activeAthletes[existing.id] !== row.athlete_name) {
-          rowWarnings.push(`Unit is currently assigned to ${activeAthletes[existing.id]} — will reassign to ${row.athlete_name}.`)
         }
       }
 
@@ -140,7 +137,7 @@ export default function CSVUpload() {
       if (!sportObj) continue
 
       const spare = row._spare
-      const newStatus = spare ? 'spare' : 'assigned'
+      const newStatus = spare ? 'unassigned_sport' : 'assigned'
 
       if (row._status === 'create') {
         const { data: newUnit } = await supabase.from('units').insert({
@@ -148,30 +145,18 @@ export default function CSVUpload() {
           status:          newStatus,
           sport_id:        sportObj.id,
           unit_type:       row.unit_type || 'GPS',
-          acquired_date:   row.date_assigned || today,
+          acquired_date:   row.date_added || today,
           acquired_source: 'csv_import',
           notes:           row.notes || null,
         }).select().single()
 
         if (newUnit) {
-          // Only create assignment if not spare
-          if (!spare) {
-            await supabase.from('assignments').insert({
-              unit_id:      newUnit.id,
-              athlete_name: row.athlete_name,
-              sport_id:     sportObj.id,
-              practitioner: row.practitioner_name || sportObj.practitioner,
-              start_date:   row.date_assigned || today,
-              notes:        row.notes || null,
-            })
-          }
           await supabase.from('events').insert({
-            unit_id:      newUnit.id,
-            event_type:   'unit_entered_inventory',
-            event_date:   row.date_assigned || today,
-            to_status:    newStatus,
-            athlete_name: spare ? null : row.athlete_name,
-            notes:        spare ? 'Added as spare via CSV import' : 'Created via CSV import',
+            unit_id:    newUnit.id,
+            event_type: 'unit_entered_inventory',
+            event_date: row.date_added || today,
+            to_status:  newStatus,
+            notes:      spare ? 'Added as spare via CSV import' : 'Added as assigned via CSV import',
           })
           created++
         }
@@ -184,39 +169,19 @@ export default function CSVUpload() {
 
         if (!existingUnit) continue
 
-        // Close any active assignment
-        await supabase.from('assignments')
-          .update({ end_date: today, end_reason: 'csv_reimport' })
-          .eq('unit_id', existingUnit.id)
-          .is('end_date', null)
-
-        // Update unit status and sport
         await supabase.from('units').update({
           status:   newStatus,
           sport_id: sportObj.id,
           notes:    row.notes || null,
         }).eq('id', existingUnit.id)
 
-        // Only create new assignment if not spare
-        if (!spare) {
-          await supabase.from('assignments').insert({
-            unit_id:      existingUnit.id,
-            athlete_name: row.athlete_name,
-            sport_id:     sportObj.id,
-            practitioner: row.practitioner_name || sportObj.practitioner,
-            start_date:   row.date_assigned || today,
-            notes:        row.notes || null,
-          })
-        }
-
         await supabase.from('events').insert({
-          unit_id:      existingUnit.id,
-          event_type:   'csv_import',
-          event_date:   row.date_assigned || today,
-          from_status:  existingUnit.status,
-          to_status:    newStatus,
-          athlete_name: spare ? null : row.athlete_name,
-          notes:        spare ? 'Set to spare via CSV import' : 'Updated via CSV import',
+          unit_id:     existingUnit.id,
+          event_type:  'csv_import',
+          event_date:  row.date_added || today,
+          from_status: existingUnit.status,
+          to_status:   newStatus,
+          notes:       spare ? 'Set to spare via CSV import' : 'Set to assigned via CSV import',
         })
         updated++
       }
@@ -247,24 +212,24 @@ export default function CSVUpload() {
         <p className="text-xs font-medium uppercase tracking-widest text-[#0057B8] mb-1">Inventory</p>
         <h1 className="text-2xl font-medium text-gray-900">Bulk Unit Upload</h1>
         <p className="text-sm text-gray-400 mt-1">
-          Upload a CSV to assign units to athletes and load spare units in one file.
+          Upload a CSV to load units by sport, marked as assigned or spare.
         </p>
       </div>
 
      {/* Template hint */}
       <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-[#0057B8] space-y-1">
-        <p><span className="font-medium">Required columns:</span> serial_number, athlete_name, sport</p>
-        <p><span className="font-medium">Optional columns:</span> practitioner_name, date_assigned (YYYY-MM-DD), unit_type (GPS or IMU), notes</p>
+        <p><span className="font-medium">Required columns:</span> serial_number, sport, assignment</p>
+        <p><span className="font-medium">Optional columns:</span> date_added (YYYY-MM-DD), unit_type (GPS or IMU), notes</p>
         <p className="text-blue-400 pt-1">
-          Tip — set <span className="font-mono font-medium">athlete_name = spare</span> for any unit that should enter the spare pool instead of being assigned to an athlete. The word "spare" is not case-sensitive — Spare, SPARE, and spare all work.
+          The <span className="font-mono font-medium">assignment</span> column must be either <span className="font-mono font-medium">assigned</span> or <span className="font-mono font-medium">spare</span> — not case-sensitive.
         </p>
         <div className="pt-2">
           <button
             onClick={() => {
               const csv = [
-                'serial_number,athlete_name,sport,unit_type,date_assigned,practitioner_name,notes',
-                'A1B2C3D4,John Smith,Basketball,IMU,2025-08-15,Wendy,Example row — delete before uploading',
-                'E5F6G7H8,spare,Soccer,GPS,2025-08-15,Carlos,Example spare row — delete before uploading',
+                'serial_number,sport,assignment,unit_type,date_added,notes',
+                'A1B2C3D4,Basketball,assigned,IMU,2025-08-15,Example row — delete before uploading',
+                'E5F6G7H8,Soccer,spare,GPS,2025-08-15,Example spare row — delete before uploading',
               ].join('\n')
               const blob = new Blob([csv], { type: 'text/csv' })
               const url = URL.createObjectURL(blob)
@@ -313,7 +278,7 @@ export default function CSVUpload() {
           {/* Summary counts */}
           <div className="flex gap-4">
             <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 text-sm">
-              <span className="text-gray-400">Assigned to athletes </span>
+              <span className="text-gray-400">Assigned </span>
               <span className="font-medium text-gray-900">{assignedCount}</span>
             </div>
             <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 text-sm">
@@ -359,8 +324,8 @@ export default function CSVUpload() {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <th className="text-left px-4 py-2 text-xs font-medium uppercase tracking-wide text-gray-400">Serial</th>
-                  <th className="text-left px-4 py-2 text-xs font-medium uppercase tracking-wide text-gray-400">Athlete</th>
                   <th className="text-left px-4 py-2 text-xs font-medium uppercase tracking-wide text-gray-400">Sport</th>
+                  <th className="text-left px-4 py-2 text-xs font-medium uppercase tracking-wide text-gray-400">Assignment</th>
                   <th className="text-left px-4 py-2 text-xs font-medium uppercase tracking-wide text-gray-400">Date</th>
                   <th className="text-left px-4 py-2 text-xs font-medium uppercase tracking-wide text-gray-400">Action</th>
                 </tr>
@@ -369,14 +334,14 @@ export default function CSVUpload() {
                 {preview.map((row, i) => (
                   <tr key={i} className={`border-b border-gray-50 last:border-0 ${row._warnings.length > 0 ? 'bg-amber-50' : ''}`}>
                     <td className="px-4 py-2 font-mono text-xs">{row.serial_number}</td>
+                    <td className="px-4 py-2">{row.sport}</td>
                     <td className="px-4 py-2">
                       {row._spare
                         ? <span className="text-gray-400 italic">spare</span>
-                        : row.athlete_name
+                        : <span>assigned</span>
                       }
                     </td>
-                    <td className="px-4 py-2">{row.sport}</td>
-                    <td className="px-4 py-2 text-gray-400 text-xs">{row.date_assigned || 'Today'}</td>
+                    <td className="px-4 py-2 text-gray-400 text-xs">{row.date_added || 'Today'}</td>
                     <td className="px-4 py-2">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                         row._spare
