@@ -66,30 +66,6 @@ export default function SportView() {
         firmware_version,
         acquired_date,
         acquired_source,
-        notes,
-        assignments!inner(
-          id,
-          athlete_name,
-          start_date,
-          end_date,
-          practitioner
-        )
-      `)
-      .eq('sport_id', sportId)
-      .neq('status', 'retired')
-      .order('serial_number')
-
-    // Also get units with no assignments
-    const { data: unitsNoAssign } = await supabase
-      .from('units')
-      .select(`
-        id,
-        serial_number,
-        status,
-        unit_type,
-        firmware_version,
-        acquired_date,
-        acquired_source,
         notes
       `)
       .eq('sport_id', sportId)
@@ -98,19 +74,8 @@ export default function SportView() {
 
     setSport(sportData)
     setAllocation(allocationData)
-    setUnits(unitsNoAssign || [])
+    setUnits(unitsData || [])
     setLoading(false)
-  }
-
-  // Get active assignment for a unit
-  async function getActiveAssignment(unitId) {
-    const { data } = await supabase
-      .from('assignments')
-      .select('athlete_name, start_date')
-      .eq('unit_id', unitId)
-      .is('end_date', null)
-      .single()
-    return data
   }
 
   const filteredUnits = units.filter(u => {
@@ -250,7 +215,6 @@ export default function SportView() {
               <th className="text-left px-4 py-3 font-medium text-gray-600">Serial Number</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600">Type</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600">Athlete</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600">Since</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600">Notes</th>
             </tr>
@@ -258,7 +222,7 @@ export default function SportView() {
           <tbody>
             {filteredUnits.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center py-12 text-gray-400">
+                <td colSpan={5} className="text-center py-12 text-gray-400">
                   No units match the current filters.
                 </td>
               </tr>
@@ -281,20 +245,6 @@ export default function SportView() {
 }
 
 function UnitRow({ unit, index, onClick }) {
-  const [athlete, setAthlete] = useState(null)
-
-  useEffect(() => {
-    if (unit.status === 'assigned') {
-      supabase
-        .from('assignments')
-        .select('athlete_name, start_date')
-        .eq('unit_id', unit.id)
-        .is('end_date', null)
-        .single()
-        .then(({ data }) => setAthlete(data))
-    }
-  }, [unit.id])
-
   return (
     <tr
       onClick={onClick}
@@ -317,15 +267,10 @@ function UnitRow({ unit, index, onClick }) {
           {STATUS_LABELS[unit.status]}
         </span>
       </td>
-      <td className="px-4 py-3 text-gray-700">
-        {athlete ? athlete.athlete_name : <span className="text-gray-300">—</span>}
-      </td>
       <td className="px-4 py-3 text-gray-400 text-xs">
-        {athlete?.start_date
-          ? new Date(athlete.start_date).toLocaleDateString()
-          : unit.acquired_date
-            ? new Date(unit.acquired_date).toLocaleDateString()
-            : '—'}
+        {unit.acquired_date
+          ? new Date(unit.acquired_date).toLocaleDateString()
+          : '—'}
       </td>
       <td className="px-4 py-3 text-gray-400 text-xs truncate max-w-[200px]">
         {unit.notes || '—'}
